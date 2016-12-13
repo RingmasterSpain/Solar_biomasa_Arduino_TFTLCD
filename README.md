@@ -5,7 +5,7 @@ Con este código Arduino centraliza el control híbrido biomasa/solar con depós
  *   AUTOR: David Losada
  *   FECHA: 8/08/2016
  *     URL: http://miqueridopinwino.blogspot.com.es/2016/08/control-centralizado-del-sistema-mixto-biomasa-solar-con-Arduino.html
- *   Versión 1.3 (15/11/16)
+ *   Versión 1.5 (12/12/16)
  *   - Se ha corregido el código de desconexión en caso de biomasa encendida, para evitar apagar el motor demasiado pronto con brasas
  *   - Se añade aviso de excesiva diferencia entre sondas, indicando en rojo la temperatura y activando alarma
  *   - Mejorada la alarma; se hace intermitente.
