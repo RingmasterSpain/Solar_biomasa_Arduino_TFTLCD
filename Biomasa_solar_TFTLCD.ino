@@ -3,7 +3,7 @@
  *   AUTOR: David Losada
  *   FECHA: 8/08/2016
  *     URL: http://miqueridopinwino.blogspot.com.es/2016/08/control-centralizado-del-sistema-mixto-biomasa-solar-con-Arduino.html
- *   Versión 1.3 (15/11/16)
+ *   Versión 1.5 (10/12/16)
  *   - Se ha corregido el código de desconexión en caso de biomasa encendida, para evitar apagar el motor demasiado pronto con brasas
  *   - Se añade aviso de excesiva diferencia entre sondas, indicando en rojo la temperatura y activando alarma
  *   - Mejorada la alarma; se hace intermitente.
@@ -14,6 +14,8 @@
  *   - Cambiada la forma en que se comprueban temperaturas, dando prioridad real a biomasa (o estamos jodidos)
  *   - Ahora se activa cada 15 días la válvula de enfriado para evitar su agarrotamiento
  *   - Corregidos varios errores
+ *   - 10/12/16 Mejorados varios puntos; no contabilizaba horas de motor, y la comprobación de temperaturas no era óptima con depósito
+ *   - 12/12/16 Mejorado el código: añadido código para dormir el procesador, reducir los refrescos a lo mínimo necesario y sensor de pellets futuro
  *
  * OBJETIVO: Prototipo control de sistema casero mixto biomasa-solar térmica
  *
@@ -36,6 +38,12 @@
 // adapted sketch by niq_ro from http://arduinotehniq.blogspot.com/
 // ver. 1m5 - 13.11.2014, Craiova - Romania
 
+//Librerías para dormir al procesador y ahorrar energía cuando no hace nada
+#include <avr/sleep.h>
+#include <avr/power.h>
+#include <avr/wdt.h>
+
+//Librerías para la pantalla gráfica
 #include <pin_magic.h>
 #include <pin_magic_MEGA.h>
 #include <pin_magic_UNO.h>
@@ -136,16 +144,16 @@ const int resistor = 6800; //El valor en ohmnios de la resistencia del termistor
 const float voltage = 5.01; // El voltaje real en el punto 5Vcc de tu placa Arduino
 
 //Deltas de temperatura
-const byte DtFsolar = 8; //Delta temp ºC conexión de motor circuito panel solar
-const byte Dtosolar = 4; //Delta temp. desconexión motor
+const byte DtFsolar = 4; //Delta temp ºC conexión de motor circuito panel solar
+const byte Dtosolar = 1; //Delta temp. desconexión motor
 
-const byte DtFbiomasa = 8; //Delta temp ºC conexión de motor y válvula circuito biomasa
-const byte Dtobiomasa = 3; //Delta temp ºC desconexión de motor y válvula circuito biomasa
+const byte DtFbiomasa = 12; //Delta temp ºC conexión de motor y válvula circuito biomasa
+const byte Dtobiomasa = 2; //Delta temp ºC desconexión de motor y válvula circuito biomasa
 
 const byte DtFEnfriar = 65; //Temp. ºC conexión electroválvula circuito desvío exceso temp a calefacción
 const byte DtoEnfriar = 60; //Temp. desconexión electroválvula desvío agua caliente a calefacción
 
-const int frecseg = 5; //Tiempo en segundos entre cada ejecución del programa (recomendado entre 3 y 10 segundos para mantener la velocidad de respuesta)
+const int frecseg = 1; //Tiempo en segundos X2 entre cada ejecución del programa (recomendado poner entre 1 y 3 para mantener la velocidad de respuesta)
 const byte difTemp = 25; //Diferencia de temperatura máxima entre sondas considerada normal, a partir de la cual salta la alarma
 const double ltsdeposito = 250; //para el cálculo de Kwh ahorrados; indicar aquí la capacidad del depósito de inercia
 
@@ -159,22 +167,25 @@ const double ltsdeposito = 250; //para el cálculo de Kwh ahorrados; indicar aqu
 #define primerSensor 11 //Pines analógicos para termistores; van correlativos desde este
 #define numeroSensores 5 //Cantidad de sensores
 
-float calibTemps[5] = {0,0,0,0,0}; //Matriz de ajustes calibración sensores en ºC; se sumará a la temp. obtenida
+float calibTemps[numeroSensores] = {0,0,0,0,0}; //Matriz de ajustes calibración sensores en ºC; se sumará a la temp. obtenida
 
-int horasValvEnfria=360; //Cada este número de horas se activará una vez la válvula de enfriado para evitar que se quede agarrotada
+int horasValvEnfria=120; //Cada este número de horas/3 se activará una vez la válvula de enfriado para evitar que se quede agarrotada
 
 //***************** FIN DE PARÁMETROS CONFIGURABLES ***********************
 
 //Variables 
-double Msensores[5] = {0,0,0,0,0}; //Matriz temperaturas obtenidas de sensores en orden de PIN
-double Mtempsens[5] = {0,0,0,0,0}; //Matriz temperaturas ordenadas a nuestro gusto
+double Msensores[numeroSensores] = {0,0,0,0,0}; //Matriz temperaturas obtenidas de sensores en orden de PIN
+double Mtempsens[numeroSensores] = {0,0,0,0,0}; //Matriz temperaturas ordenadas a nuestro gusto
+double MtempAnt[numeroSensores] = {0,0,0,0,0}; //Matriz temperaturas anteriores para borrado pantalla
 const char* Mnombres[]={"Captador:","Biomasa1:","Biomasa2:","Retorno: ","Deposito:"}; //Matriz de arrays (*=pointers) de los nombres de los sensores
+String TextoAnt;
 
 #define captador 0 //Definimos la posición en la matriz de cada texto 
 #define biomasa1 1
 #define biomasa2 2
 #define retorno  3
 #define deposito 4
+#define pellets  5
 
 boolean motorON=false; //Para comprobar si está en marcha
 boolean valvula=false; //control electroválvula 3 vías biomasa
@@ -204,10 +215,12 @@ double T = 0; //Declaramos la variable Temperatura
 int grados, decimas; //Para ponerle coma al resultado (en español)
 
 unsigned long millisHrsArduino=0; //Guardar horas funiconamiento Arduino
-unsigned long millisMotor=0; //Guardar horas funcionamiento Motor
+unsigned long millisRefresca=0; //para refrescar pantalla
 unsigned long millisInicioMotor=0; //Guardar tiempo activado motor
+unsigned long restoHrsMotor=0; //Guardamos resto tiempo activación motor
 unsigned long timeLED=0; //Tiempo funcionamiento LED placa
 unsigned long milisegundos=0; //Para almacenar temporalmente millis
+unsigned long millisValvula=0; //Guardar momento activación válvula para desactivar después de 15 min.
 byte error=0; //En caso de error será <> 0
 
 int segundos=0; //Cuando lleguemos a 3600 segundos, habrá pasado una hora.
@@ -243,6 +256,40 @@ void setup() {
 //Si quitamos el comentario de la linea siguiente, se ajusta la hora y la fecha con la del ordenador
 //RTC.adjust(DateTime(__DATE__, __TIME__));
   Serial.println("Arduino Working OK");
+
+//Líneas de configuración del WatchDog Timer
+/*** Setup the WDT ***/
+  
+  /* Clear the reset flag. */
+  MCUSR &= ~(1<<WDRF);
+  
+  /* In order to change WDE or the prescaler, we need to
+   * set WDCE (This will allow updates for 4 clock cycles).
+   */
+  WDTCSR |= (1<<WDCE) | (1<<WDE);
+
+  /* set new watchdog timeout prescaler value */ 
+   //WDP3 - WDP2 - WPD1 - WDP0 - time
+  // 0      0      0      0      16 ms
+  // 0      0      0      1      32 ms
+  // 0      0      1      0      64 ms
+  // 0      0      1      1      0.125 s
+  // 0      1      0      0      0.25 s
+  // 0      1      0      1      0.5 s
+  // 0      1      1      0      1.0 s
+  // 0      1      1      1      2.0 s
+  // 1      0      0      0      4.0 s
+  // 1      0      0      1      8.0 s
+  
+  WDTCSR = 1<<WDP2 | 1<<WDP1 | 1<<WDP0; /* 2.0 seconds */
+  //WDTCSR = 1<<WDP3; /* 4.0 seconds */
+  //WDTCSR = 1<<WDP0 | 1<<WDP3; /* 8.0 seconds */
+  
+  /* Enable the WD interrupt (note no reset). */
+  WDTCSR |= _BV(WDIE);
+  
+  Serial.println("Initialisation complete.");
+
 
 //#ifdef USE_ADAFRUIT_SHIELD_PINOUT
 //  Serial.println(F("Using Adafruit 2.8\" TFT Arduino Shield Pinout"));
@@ -310,8 +357,8 @@ if(identifier == 0x9325) {
   tft.setTextColor(BLUE);
   tft.println(identifier, HEX);
   tft.setTextSize(1);
-  tft.setCursor(70, 220);
-  tft.println("Copyright 2016 Ringmaster v1.3");
+  tft.setCursor(90, 220);
+  tft.println("Copyright 2016 Ringmaster v1.5");
   
   delay(6000);
 
@@ -367,7 +414,7 @@ void loop() {
 //*******************************RECOGIDA Y CÁLCULO TEMPERATURAS SONDAS*********
 
 //Borrar array
-for(int i=0; i<5; i++) 
+for(int i=0; i<numeroSensores; i++) 
       {               
          Msensores[i]=0;
       }  
@@ -375,7 +422,7 @@ for(int i=0; i<5; i++)
 //Recoge 5 veces para sacar medias
  for(int x=0; x<5; x++) 
     {
-      for(int i=0; i<5; i++) //5 termistores analógicos
+      for(int i=0; i<numeroSensores; i++) //termistores analógicos
       {               
          Msensores[i]=Msensores[i]+analogRead(i+primerSensor);
       }  
@@ -383,7 +430,7 @@ for(int i=0; i<5; i++)
     }
 Serial.println("Recogidas temperaturas");
 //Sacar medias
-for(int i=0; i<5; i++) //5 termistores analógicos
+for(int i=0; i<numeroSensores; i++) //termistores analógicos
       {               
          Msensores[i]=(Msensores[i]/5)+calibTemps[i];
       }  
@@ -391,14 +438,14 @@ for(int i=0; i<5; i++) //5 termistores analógicos
 Serial.println("Medias obtenidas");
 //Comprobamos si las sondas están ok; si el valor es 0 (cero absoluto), la sonda estará desconectada
 error=0; //reseteamos siempre al principio del bucle
-for(int i=0; i<5; i++) { //5 termistores analógicos         
+for(int i=0; i<numeroSensores; i++) { //ermistores analógicos         
     if (Msensores[i]<50) {
       error++; //Avisamos con la alarma del error
       }
 }  
 
 //Convertimos los valores a la temperatura correcta
-for(int i=0; i<5; i++)
+for(int i=0; i<numeroSensores; i++)
    {
     float v2 = (voltage*float(Msensores[i]))/1024.0f;  //Convertimos a voltios :)  
   
@@ -423,11 +470,16 @@ for(int i=0; i<5; i++)
 Serial.println("Temperaturas convertidas");
 
 //Activamos alarma si alguna temp es excesiva
-for(int i=0; i<5; i++) { //5 termistores analógicos               
+for(int i=0; i<numeroSensores; i++) { //5 termistores analógicos               
      if (Msensores[i]>90) {
       error++; //Si se acumula algún error, haremos saltar la alarma en forma de zumbido
      }
  }  
+
+//Guardamos valores anteriores
+for(int i=0; i<numeroSensores; i++) { 
+  MtempAnt[i]=Mtempsens[i];
+}
 
 //Pasamos los valores a la matriz en el orden que queremos en pantalla
 Mtempsens[0]=Msensores[0];
@@ -440,29 +492,20 @@ Mtempsens[4]=Msensores[1];
 //Comprobamos biomasa, y actuamos sobre motor y electroválvulas en consecuencia
 Serial.println("Comparando temperaturas"); //Atención; tengo en cuenta también Biomasa2 para activar por biomasa
 //Si el fuego está encendido, activar motor y electroválvula circuito biomasa (PRIORITARIO)
-if ((Mtempsens[biomasa1]-Mtempsens[retorno])>= DtFbiomasa or (Mtempsens[biomasa2]-Mtempsens[retorno])>= DtFbiomasa or (Mtempsens[biomasa1]-Mtempsens[deposito])>=DtFbiomasa) {
+if ((Mtempsens[biomasa1]-Mtempsens[retorno])>= DtFbiomasa or (Mtempsens[biomasa2]-Mtempsens[retorno])>= DtFbiomasa) {
     valvula=true;
     motorON=true;
   }
-else { //Si lo anterior no se cumple, comprobar si ya no está caliente y la temperatura captador
-  //Si biomasa está fría
-  if ((Mtempsens[biomasa1]-Mtempsens[retorno])<= Dtobiomasa and (Mtempsens[biomasa2]-Mtempsens[retorno])<= Dtobiomasa) {
+else { //Si lo anterior no se cumple, comprobar si ya no está caliente y si temperatura captador también está frío, apagar
+  if ((Mtempsens[biomasa1]-Mtempsens[retorno])<= Dtobiomasa and (Mtempsens[biomasa2]-Mtempsens[retorno])<= Dtobiomasa and (Mtempsens[captador]-Mtempsens[retorno])< Dtosolar) {
     motorON=false;
-    //Si biomasa está fría y no hay razón para mantener la electroválvula de desvío biomasa, la desconectamos
-    if ((Mtempsens[biomasa1]-Mtempsens[deposito])<Dtobiomasa) { 
-      valvula=false;
-      }
+    millisValvula=millis(); //Iniciamos cuenta atrás
   }
   //Si captador solar está caliente activamos motor
   if ((Mtempsens[captador]-Mtempsens[deposito])>= DtFsolar) { //Si diferencia temp. captador y depósito mayor que el delta, activar motor
     motorON=true;
     }
-   else {
-      if ((Mtempsens[captador]-Mtempsens[deposito])< Dtosolar)  {
-        motorON=false;
-        }
-    }
-}
+ }
 
 //Serial.print("Temp deposito: ");
 //Serial.println(Mtempsens[deposito]);
@@ -472,7 +515,7 @@ else { //Si lo anterior no se cumple, comprobar si ya no está caliente y la tem
 //Dependiendo del resultado de las anteriores comprobaciones, actuamos sobre el motor y electroválvula
 if (motorON==true) {
     if (digitalRead(motorPIN)==LOW) { //Se activa relé; contamos el número de activaciones
-    Mdatos[ctrReleMotor]=Mdatos[ctrReleMotor]+1;
+    Mdatos[ctrReleMotor]++;
     tempPrevia=Mtempsens[deposito]; //Guardamos temperatura actual deposito
     millisInicioMotor=millis(); //Y activamos el contador de tiempo uso motor
   }
@@ -480,7 +523,6 @@ if (motorON==true) {
   }
 else  {
     //Cada vez que paramos el motor, comprobamos diferencia temp. depósito y añadimos kwh ahorrados
-    //Para evitar guardar fracciones, y no perder la fracción, la vamos sumando en siguientes cálculos
     if (Mtempsens[deposito]>tempPrevia and digitalRead(motorPIN)==HIGH) {
       Serial.print("Valor kwh");
       Serial.println(kwhGrado);
@@ -492,9 +534,13 @@ else  {
     digitalWrite(motorPIN,LOW);
   }
 
+if (digitalRead(motorPIN)==LOW and (millis()-millisValvula)>=600000) { //Si el motor sigue apagado 10 minutos, apagamos válvula tres vías.
+      valvula=false;  //Para evitar accionamientos innecesarios en las bajadas de temp por recargas de leña
+}
+
 if (valvula==true) {
     if (digitalRead(valvbioPIN)==LOW) { //Se activa relé; contamos el número de activaciones
-      Mdatos[ctrValvulaFuego]=Mdatos[ctrValvulaFuego]+1;
+      Mdatos[ctrValvulaFuego]++;
         }
     digitalWrite(valvbioPIN, HIGH);
 }
@@ -505,7 +551,7 @@ else  {
 //Si la temperatura del depósito es excesiva, o éste no absorve suficiente calor del serpentín, activar el relé de enfriamiento (desvío a calefacción)
 if (((Mtempsens[deposito]> DtFEnfriar) and motorON==true) or (motorON==true and Mtempsens[biomasa1]>80)) {
     if (digitalRead(valvenfriaPIN)==LOW) { //Se activa relé; contamos el número de activaciones
-    MnomDatos[ctrValvulaEnfriar]=MnomDatos[ctrValvulaEnfriar]+1;
+    MnomDatos[ctrValvulaEnfriar]++;
   }
   Serial.println("Activar válvula desvío circuito enfriado");
   digitalWrite(valvenfriaPIN,HIGH);
@@ -517,60 +563,21 @@ else { //Desactivar la válvula enfriado si la temp depósito ha bajado suficien
 }
   
 Serial.println("Mostramos en pantalla");
+milisegundos=millis();
 // Y por ultimo lo mandamos a la pantalla LCD
+//Cada hora actualizamos texto y estadísticas
+if ((milisegundos-millisRefresca)>=3600000 or milisegundos<8000) {
+    millisRefresca=milisegundos;
     tft.fillScreen(BLACK); //Es muy lento, tenerlo en cuenta
     tft.setTextSize(3);
     tft.setCursor(0,0);
-    for(int i=0; i<5; i++) //5 termistores analógicos
-      {               
+    for(int i=0; i<numeroSensores; i++) { //5 termistores analógicos
           tft.setTextColor(YELLOW);
           tft.print(Mnombres[i]);  
-          if (Mtempsens[i]>-270) {
-            if ((i==captador) || (i==biomasa1) || (i==biomasa2)) { //Si sonda captador o biomasa tienen mucha diferencia con respecto de depósito y retorno
-              if ((Mtempsens[i]-Mtempsens[i+1])>difTemp) {
-                tft.setTextColor(RED); //Ponemos la temperatura en rojo
-                error++; //Activamos alarma
-              }
-            }
-            grados=int(Mtempsens[i]);
-            if (grados<10) {
-              tft.print(" ");
-            }
-            tft.print(grados); //Grados
-            tft.print(",");
-            decimas=(Mtempsens[i]-grados)*10;
-            tft.print(abs(decimas)); //décimas de grado
-            tft.println(" C");
-          }
-          else { //La temp es incorrecta
-            tft.setTextColor(RED);
-            tft.println("ERROR");
-            error++;
-          }
-      }  
-      tft.setTextColor(YELLOW);
-      tft.setTextSize(2);
-      //tft.println(" ");
-      tft.setTextSize(3);
-      if (motorON==true) {
-        tft.setTextColor(RED);
-        tft.print("MOTOR ON");
+          tft.println("     C");
       }
-    else {
-        tft.setTextColor(GREEN); //Indicamos ahorro KWh renovables
-        tft.print("MOTOR OFF");
-      }
-   if (digitalRead(valvenfriaPIN)==HIGH) { //Indicamos si está la válvula de enfriado activada
-    tft.setTextColor(WHITE);
-    tft.print(" ENFRIA");
-    }
-    else {
-      if (digitalRead(valvbioPIN)==HIGH) { //Electroválvula activada
-      tft.setTextColor(WHITE);
-      tft.print(" BIOMASA");
-      }
-    }
-    tft.println("");
+    //Escribimos estadísticas
+    tft.setCursor(0,144);
     tft.setTextSize(2);
     tft.setTextColor(GREEN); //Indicamos ahorro Kwh y CO2 evitado
     tft.print(MnomDatos[ctrKWh]);
@@ -579,13 +586,87 @@ Serial.println("Mostramos en pantalla");
 //    tft.print("- Kg CO2: ");
 //    tft.print(int(Mdatos[ctrKWh]*0.2016));
     tft.setTextColor(BLUE);
-    for(int i=0; i<5; i++) //Datos 
+    for(int i=0; i<numeroSensores; i++) //Datos 
         {               
             tft.print(MnomDatos[i]);  
             tft.print(": ");
             tft.println(Mdatos[i]);
         }  
+}
 
+//Cada pocos seg. sólo actualizamos datos *********
+tft.setTextSize(3);
+for(int i=0; i<numeroSensores; i++) {//termistores analógicos
+    //Borramos anterior
+    tft.setTextColor(BLACK);
+    tft.setCursor(162,i*24);
+    if (Mtempsens[i]<=-270) {
+      tft.print("ERROR");
+    }
+    else {
+      grados=int(MtempAnt[i]);
+        if (grados<10) {
+          tft.print(" ");
+        }
+        tft.print(grados); //Grados
+        tft.print(",");
+        decimas=(MtempAnt[i]-grados)*10;
+        tft.println(abs(decimas)); //décimas de grado
+    }
+    
+    tft.setTextColor(YELLOW);
+    tft.setCursor(162,i*24);
+    if (Mtempsens[i]>-270) {
+      if ((i==captador) || (i==biomasa1) || (i==biomasa2)) { //Si sonda captador o biomasa tienen mucha diferencia con respecto de depósito y retorno
+        if ((Mtempsens[i]-Mtempsens[i+1])>difTemp) {
+          tft.setTextColor(RED); //Ponemos la temperatura en rojo
+          error++; //Activamos alarma
+        }
+      }
+      grados=int(Mtempsens[i]);
+      if (grados<10) {
+        tft.print(" ");
+      }
+      tft.print(grados); //Grados
+      tft.print(",");
+      decimas=(Mtempsens[i]-grados)*10;
+      tft.println(abs(decimas)); //décimas de grado
+    }
+    else { //La temp es incorrecta
+      tft.setTextColor(RED);
+      tft.println("ERROR");
+      error++;
+    }
+}
+//TEXTO DE AVISO
+tft.setTextColor(BLACK);
+tft.setCursor(0,120);
+tft.print(TextoAnt);
+//Ponemos lo nuevo
+tft.setCursor(0,120);
+tft.setTextSize(3);
+if (motorON==true) {
+  tft.setTextColor(RED);
+  tft.print("MOTOR ON");
+  TextoAnt="MOTOR ON";
+}
+else {
+    tft.setTextColor(GREEN); //Indicamos ahorro KWh renovables
+    tft.print("MOTOR OFF");
+    TextoAnt="MOTOR OFF";
+  }
+if (digitalRead(valvenfriaPIN)==HIGH) { //Indicamos si está la válvula de enfriado activada
+tft.setTextColor(WHITE);
+tft.print(" ENFRIA");
+TextoAnt=String(TextoAnt + " ENFRIA");
+}
+else {
+  if (digitalRead(valvbioPIN)==HIGH) { //Electroválvula activada
+  tft.setTextColor(WHITE);
+  tft.print(" BIOMASA");
+  TextoAnt=String(TextoAnt + " BIOMASA");
+  }
+}
   
 //DEBUG *************
 //Serial.print("Millis: ");
@@ -595,37 +676,31 @@ Serial.println("Mostramos en pantalla");
 
 // _______________________________ GUARDAMOS TIEMPOS _______________________________________
 //*** Si el motor ha estado activado, sumamos el tiempo y lo guardamos *******
-milisegundos=millis();
 if (millisInicioMotor>milisegundos) { //Tenemos en cuenta si se ha reseteado millis a los 50 días
    millisInicioMotor=milisegundos; 
     } 
 if (millisHrsArduino>milisegundos) { //Lo mismo con las horas desde inicio
   millisHrsArduino=milisegundos;
 }
-//Si ha pasado una hora con el motor activado, la sumamos
-if (motorON==true && millisInicioMotor>0 && (milisegundos-millisInicioMotor)>3600000) {
-    millisMotor= millisMotor + ((milisegundos-millisInicioMotor)); //Sumamos la diferencia
-    if (millisMotor>3600000) { //si es más de una hora, la pasamos al contador principal
-      MnomDatos[hrsMotorOn]=MnomDatos[hrsMotorOn]+1;
-      millisMotor=millisMotor-3600000;
-    }
-    millisInicioMotor=milisegundos; //Y volvemos a empezar la cuenta
-}
-//Estuvo encendido y acaba de apagarse; sumamos tiempo y reseteamos
-if (motorON==false && millisInicioMotor>0) { 
-    millisMotor= millisMotor + ((milisegundos-millisInicioMotor)); //Nunca va a estar más de unas horas en marcha
+
+//Estuvo encendido y acaba de apagarse; sumamos tiempo al contador de horas del motor y reseteamos
+if (motorON==false and millisInicioMotor>0) { 
+    Mdatos[hrsMotorOn]= Mdatos[hrsMotorOn] + (milisegundos+restoHrsMotor-millisInicioMotor)/3600000;
+    restoHrsMotor=(milisegundos+restoHrsMotor-millisInicioMotor)-int((milisegundos+restoHrsMotor-millisInicioMotor)/3600000);
     millisInicioMotor=0;
 }
+Serial.print("restoHrsMotor: ");
+Serial.println(restoHrsMotor);
 
-//*** Cada hora salvamos a la EEPROM los datos que han cambiado (no hacerlo mas frecuente para prevenir el envejecimiento prematuro de la FLASH)
-if ((milisegundos-millisHrsArduino)>=3600000) { //Si ha pasado una hora
+//*** Cada 3 horas salvamos a la EEPROM los datos que han cambiado (no hacerlo mas frecuente para prevenir el envejecimiento prematuro de la FLASH)
+if ((milisegundos-millisHrsArduino)>=(3600000*3)) { //Si ha pasado tres horas
       Serial.println("Guardamos horas Arduino y resto de datos en EEPROM");
-      Mdatos[hrsArduino]=Mdatos[hrsArduino]+1; //hrs Arduino
+      Mdatos[hrsArduino]=Mdatos[hrsArduino]+3; //hrs Arduino
       millisHrsArduino=milisegundos; //Actualizamos
       //Comprobamos si el contador de activado de válvula de desvío enfriamiento ha llegado a cero para activarla 5 segundos
       //Evitamos posibles agarrotamientos por falta de uso.
       activarValvEnfria++;
-      if (activarValvEnfria=horasValvEnfria) {
+      if (activarValvEnfria>=horasValvEnfria) {
         activarValvEnfria=0;
         digitalWrite(valvenfriaPIN,HIGH);
         delay(5000);
@@ -660,9 +735,13 @@ if (error>0) { //Si hay algún problema, hacemos sonar la alarma intermitentemen
     delay(700);
     }
   }
-  else {
+else {
     digitalWrite(zumbadorPIN,LOW);
-    }
+    Serial.println("Dormimos un poco... ZZZ");
+     for(int i=0; i<frecseg; i++) {
+        enterSleep(); //delay(frecseg*1000);  //Bucle se ejecuta cada frecseg segundos
+     }
+}
 
 //código para depuración
 //    Serial.print(F("Valor kwh"));
@@ -671,9 +750,52 @@ if (error>0) { //Si hay algún problema, hacemos sonar la alarma intermitentemen
 //    Serial.print(F("Ahorro"));
 //    Serial.println(kwhAhorro);
 
-if (error==0) {
-      delay(frecseg*1000);  //Bucle se ejecuta cada frecseg segundos
-    //lpDelay(frecseg*4); //Pone el procesador a descansar a la mínima velocidad; anulado, no funciona bien  
+//THE END
 }
 
+
+//RUTINAS
+//Code from http://donalmorrissey.blogspot.com.es/2010/04/sleeping-arduino-part-5-wake-up-via.html
+/***************************************************
+ *  Name:        ISR(WDT_vect)
+ *
+ *  Returns:     Nothing.
+ *
+ *  Parameters:  None.
+ *
+ *  Description: Watchdog Interrupt Service. This
+ *               is executed when watchdog timed out.
+ *
+ ***************************************************/
+ISR(WDT_vect)
+{
+ //Aquí el código que queremos se ejecute cuando el watchdog "despierta" al procesador
+
+}
+
+
+
+/***************************************************
+ *  Name:        enterSleep
+ *
+ *  Returns:     Nothing.
+ *
+ *  Parameters:  None.
+ *
+ *  Description: Enters the arduino into sleep mode.
+ *
+ ***************************************************/
+void enterSleep(void)
+{
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);   /* EDIT: could also use SLEEP_MODE_PWR_SAVE for less power consumption. */
+  sleep_enable();
+  
+  /* Now enter sleep mode. */
+  sleep_mode();
+  
+  /* The program will continue from here after the WDT timeout*/
+  sleep_disable(); /* First thing to do is disable sleep. */
+  
+  /* Re-enable the peripherals. */
+  power_all_enable();
 }
