@@ -3,7 +3,7 @@
  *   AUTOR: David Losada
  *   FECHA: 8/08/2016
  *     URL: http://miqueridopinwino.blogspot.com.es/2016/08/control-centralizado-del-sistema-mixto-biomasa-solar-con-Arduino.html
- *   Versión 1.5 (10/12/16)
+ *   Versión 1.6 (15/12/16)
  *   - Se ha corregido el código de desconexión en caso de biomasa encendida, para evitar apagar el motor demasiado pronto con brasas
  *   - Se añade aviso de excesiva diferencia entre sondas, indicando en rojo la temperatura y activando alarma
  *   - Mejorada la alarma; se hace intermitente.
@@ -16,6 +16,7 @@
  *   - Corregidos varios errores
  *   - 10/12/16 Mejorados varios puntos; no contabilizaba horas de motor, y la comprobación de temperaturas no era óptima con depósito
  *   - 12/12/16 Mejorado el código: añadido código para dormir el procesador, reducir los refrescos a lo mínimo necesario y sensor de pellets futuro
+ *   - 15/12/16 Corregida la evaluación del tiempo
  *
  * OBJETIVO: Prototipo control de sistema casero mixto biomasa-solar térmica
  *
@@ -144,7 +145,7 @@ const int resistor = 6800; //El valor en ohmnios de la resistencia del termistor
 const float voltage = 5.01; // El voltaje real en el punto 5Vcc de tu placa Arduino
 
 //Deltas de temperatura
-const byte DtFsolar = 4; //Delta temp ºC conexión de motor circuito panel solar
+const byte DtFsolar = 6; //Delta temp ºC conexión de motor circuito panel solar
 const byte Dtosolar = 1; //Delta temp. desconexión motor
 
 const byte DtFbiomasa = 12; //Delta temp ºC conexión de motor y válvula circuito biomasa
@@ -214,20 +215,19 @@ const float unodivr = 1/(resistor * pow(e,(-B/298.15))); //Con pow elevamos e al
 double T = 0; //Declaramos la variable Temperatura
 int grados, decimas; //Para ponerle coma al resultado (en español)
 
-unsigned long millisHrsArduino=0; //Guardar horas funiconamiento Arduino
-unsigned long millisRefresca=0; //para refrescar pantalla
-unsigned long millisInicioMotor=0; //Guardar tiempo activado motor
-unsigned long restoHrsMotor=0; //Guardamos resto tiempo activación motor
+float segundos=0; //Guardamos segundos funcionamiento (en sleepmode millis se para)
+unsigned long millisAnterior=0; //Guardamos millis anterior
+unsigned long segundosArduino=0; //Guardar horas funiconamiento Arduino
+unsigned long segundosRefresca=0; //para refrescar pantalla
+unsigned long segundosInicioMotor=0; //Guardar tiempo activado motor
+unsigned long restoSegundosMotor=0; //Guardamos resto tiempo activación motor
 unsigned long timeLED=0; //Tiempo funcionamiento LED placa
-unsigned long milisegundos=0; //Para almacenar temporalmente millis
-unsigned long millisValvula=0; //Guardar momento activación válvula para desactivar después de 15 min.
+unsigned long segundosValvula=0; //Guardar momento activación válvula para desactivar después de 15 min.
 byte error=0; //En caso de error será <> 0
 
-int segundos=0; //Cuando lleguemos a 3600 segundos, habrá pasado una hora.
 int direccionInicial; //Dirección memoria EEPROM a partir de la cual se guardan los datos, asignado por la librería EEPROMex
 
 void setup() {
-  millisHrsArduino=millis();
   Serial.begin(9600);
 
 //Descomentar las lÃ­neas siguientes para sincronizar tiempo por el Serial
@@ -385,10 +385,13 @@ if (EEPROM.readLong(direccionInicial+45)!= 4011983) { //Si se ha reseteado ya, n
     Serial.println("Borrado de EEPROM terminado");
 }
 
-//Para vaciar EEPROM datos
-//for(int i=0; i<6; i++) { 
-       // EEPROM.writeLong(direccionInicial+(i*4),0);
-       // }
+//Para guardar en EEPROM datos concretos
+//EEPROM.writeLong(direccionInicial+(0),3000); //"Hrs motor ON"
+//EEPROM.writeLong(direccionInicial+(4),945); //"Hrs Arduino"
+//EEPROM.writeLong(direccionInicial+(8),50); //"CTR RELE Motor"
+//EEPROM.writeLong(direccionInicial+(12),0); //"CTR VALVULA Fuego"
+//EEPROM.writeLong(direccionInicial+(16),0); //"CTR VALVULA Enfriar"
+//EEPROM.writeLong(direccionInicial+(20),0); //"KWh RENOVABLES"
         
 //Coger valores almacenados EEPROM
 for(int i=0; i<6; i++) {
@@ -409,7 +412,7 @@ for(int i=primerSensor; i<numeroSensores; i++) {
 
 //----------------------------------PROGRAMA PRINCIPAL-------------------------
 void loop() {
-
+  millisAnterior=millis(); //Recogemos valor millis al inicio del programa para sumar luego la diferencia a "segundos"
   //time_t t = now(); //Cogemos la hora
 //*******************************RECOGIDA Y CÁLCULO TEMPERATURAS SONDAS*********
 
@@ -499,7 +502,6 @@ if ((Mtempsens[biomasa1]-Mtempsens[retorno])>= DtFbiomasa or (Mtempsens[biomasa2
 else { //Si lo anterior no se cumple, comprobar si ya no está caliente y si temperatura captador también está frío, apagar
   if ((Mtempsens[biomasa1]-Mtempsens[retorno])<= Dtobiomasa and (Mtempsens[biomasa2]-Mtempsens[retorno])<= Dtobiomasa and (Mtempsens[captador]-Mtempsens[retorno])< Dtosolar) {
     motorON=false;
-    millisValvula=millis(); //Iniciamos cuenta atrás
   }
   //Si captador solar está caliente activamos motor
   if ((Mtempsens[captador]-Mtempsens[deposito])>= DtFsolar) { //Si diferencia temp. captador y depósito mayor que el delta, activar motor
@@ -517,7 +519,7 @@ if (motorON==true) {
     if (digitalRead(motorPIN)==LOW) { //Se activa relé; contamos el número de activaciones
     Mdatos[ctrReleMotor]++;
     tempPrevia=Mtempsens[deposito]; //Guardamos temperatura actual deposito
-    millisInicioMotor=millis(); //Y activamos el contador de tiempo uso motor
+    segundosInicioMotor=segundos; //Y activamos el contador de tiempo uso motor
   }
   digitalWrite(motorPIN,HIGH);
   }
@@ -530,11 +532,12 @@ else  {
       Serial.print("Ahorro");
       Serial.println(kwhAhorro);
       Mdatos[ctrKWh]=Mdatos[ctrKWh]+int(kwhAhorro); //Guardamos el dato
+      segundosValvula=segundos; //Iniciamos cuenta atrás
     }
     digitalWrite(motorPIN,LOW);
   }
 
-if (digitalRead(motorPIN)==LOW and (millis()-millisValvula)>=600000) { //Si el motor sigue apagado 10 minutos, apagamos válvula tres vías.
+if (motorON==false and (segundos-segundosValvula)>=600) { //Si el motor sigue apagado 10 minutos, apagamos válvula tres vías.
       valvula=false;  //Para evitar accionamientos innecesarios en las bajadas de temp por recargas de leña
 }
 
@@ -563,11 +566,10 @@ else { //Desactivar la válvula enfriado si la temp depósito ha bajado suficien
 }
   
 Serial.println("Mostramos en pantalla");
-milisegundos=millis();
 // Y por ultimo lo mandamos a la pantalla LCD
-//Cada hora actualizamos texto y estadísticas
-if ((milisegundos-millisRefresca)>=3600000 or milisegundos<8000) {
-    millisRefresca=milisegundos;
+//Cada hora actualizamos texto y estadísticas (y en los primeros segundos)
+if ((segundos-segundosRefresca)>=3600 or millis()<10000) {
+    segundosRefresca=segundos;
     tft.fillScreen(BLACK); //Es muy lento, tenerlo en cuenta
     tft.setTextSize(3);
     tft.setCursor(0,0);
@@ -670,33 +672,27 @@ else {
   
 //DEBUG *************
 //Serial.print("Millis: ");
-//Serial.println(millis());
+//Serial.println(segundos);
 //Serial.print(F("MillisMotor: "));
 //Serial.println(millisInicioMotor);
 
+
 // _______________________________ GUARDAMOS TIEMPOS _______________________________________
 //*** Si el motor ha estado activado, sumamos el tiempo y lo guardamos *******
-if (millisInicioMotor>milisegundos) { //Tenemos en cuenta si se ha reseteado millis a los 50 días
-   millisInicioMotor=milisegundos; 
-    } 
-if (millisHrsArduino>milisegundos) { //Lo mismo con las horas desde inicio
-  millisHrsArduino=milisegundos;
-}
-
 //Estuvo encendido y acaba de apagarse; sumamos tiempo al contador de horas del motor y reseteamos
-if (motorON==false and millisInicioMotor>0) { 
-    Mdatos[hrsMotorOn]= Mdatos[hrsMotorOn] + (milisegundos+restoHrsMotor-millisInicioMotor)/3600000;
-    restoHrsMotor=(milisegundos+restoHrsMotor-millisInicioMotor)-int((milisegundos+restoHrsMotor-millisInicioMotor)/3600000);
-    millisInicioMotor=0;
+if (motorON==false and segundosInicioMotor>0) { 
+    Mdatos[hrsMotorOn]= Mdatos[hrsMotorOn] + (segundos+restoSegundosMotor-segundosInicioMotor)/3600;
+    restoSegundosMotor=(segundos+restoSegundosMotor-segundosInicioMotor)-int((segundos+restoSegundosMotor-segundosInicioMotor)/3600);
+    segundosInicioMotor=0;
 }
 Serial.print("restoHrsMotor: ");
-Serial.println(restoHrsMotor);
+Serial.println(restoSegundosMotor);
 
 //*** Cada 3 horas salvamos a la EEPROM los datos que han cambiado (no hacerlo mas frecuente para prevenir el envejecimiento prematuro de la FLASH)
-if ((milisegundos-millisHrsArduino)>=(3600000*3)) { //Si ha pasado tres horas
+if ((segundos-segundosArduino)>=(3600*3)) { //Si ha pasado tres horas
       Serial.println("Guardamos horas Arduino y resto de datos en EEPROM");
       Mdatos[hrsArduino]=Mdatos[hrsArduino]+3; //hrs Arduino
-      millisHrsArduino=milisegundos; //Actualizamos
+      segundosArduino=segundos; //Actualizamos
       //Comprobamos si el contador de activado de válvula de desvío enfriamiento ha llegado a cero para activarla 5 segundos
       //Evitamos posibles agarrotamientos por falta de uso.
       activarValvEnfria++;
@@ -715,13 +711,9 @@ if ((milisegundos-millisHrsArduino)>=(3600000*3)) { //Si ha pasado tres horas
 
 Serial.println("hacemos parpadear LED");
    //Hacemos parpadear al LED comprobando el tiempo desde la última activación
-  milisegundos=millis();
-  if (timeLED>milisegundos) { //Cuando pasen 50 dias resetear
-    timeLED=millis();
-  }
-  if ((milisegundos-timeLED)>frecseg*1000*2) {
+  if ((segundos-timeLED)>2) {
       digitalWrite(ledPIN,HIGH); //enciende LED indicando funcioanmiento
-      timeLED=milisegundos;
+      timeLED=segundos;
   }
   else {
      digitalWrite(ledPIN,LOW); //apaga led
@@ -738,10 +730,21 @@ if (error>0) { //Si hay algún problema, hacemos sonar la alarma intermitentemen
 else {
     digitalWrite(zumbadorPIN,LOW);
     Serial.println("Dormimos un poco... ZZZ");
-     for(int i=0; i<frecseg; i++) {
+    segundos=segundos + ((float(millis()-millisAnterior))/1000);
+    for(int i=0; i<frecseg; i++) {
         enterSleep(); //delay(frecseg*1000);  //Bucle se ejecuta cada frecseg segundos
-     }
+        segundos=segundos+2; //Actualizamos tiempo
+    }
 }
+
+if (segundosInicioMotor>=segundos) { //Tenemos en cuenta si se ha desbordado segundos
+   segundosInicioMotor=segundos; 
+   segundosArduino=segundos;
+   segundosValvula=segundos;
+   segundosRefresca=0;
+   millisAnterior=millis();
+    } 
+
 
 //código para depuración
 //    Serial.print(F("Valor kwh"));
