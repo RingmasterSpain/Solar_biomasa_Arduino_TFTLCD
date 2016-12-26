@@ -358,7 +358,7 @@ if(identifier == 0x9325) {
   tft.println(identifier, HEX);
   tft.setTextSize(1);
   tft.setCursor(90, 220);
-  tft.println("Copyright 2016 Ringmaster v1.5");
+  tft.println("Copyright 2016 Ringmaster v1.6");
   
   delay(6000);
 
@@ -681,12 +681,15 @@ else {
 //*** Si el motor ha estado activado, sumamos el tiempo y lo guardamos *******
 //Estuvo encendido y acaba de apagarse; sumamos tiempo al contador de horas del motor y reseteamos
 if (motorON==false and segundosInicioMotor>0) { 
-    Mdatos[hrsMotorOn]= Mdatos[hrsMotorOn] + (segundos+restoSegundosMotor-segundosInicioMotor)/3600;
-    restoSegundosMotor=(segundos+restoSegundosMotor-segundosInicioMotor)-int((segundos+restoSegundosMotor-segundosInicioMotor)/3600);
+    Mdatos[hrsMotorOn]= Mdatos[hrsMotorOn] + ((segundos+restoSegundosMotor-segundosInicioMotor)/3600);
+    restoSegundosMotor=(segundos+restoSegundosMotor-segundosInicioMotor)-(int((segundos+restoSegundosMotor-segundosInicioMotor)/3600)*3600);
     segundosInicioMotor=0;
 }
-Serial.print("restoHrsMotor: ");
-Serial.println(restoSegundosMotor);
+//DEBUG ***********
+//Serial.print("HrsMotorOn: ");
+//Serial.println(Mdatos[hrsMotorOn]);
+//Serial.print("restoHrsMotor: ");
+//Serial.println(restoSegundosMotor);
 
 //*** Cada 3 horas salvamos a la EEPROM los datos que han cambiado (no hacerlo mas frecuente para prevenir el envejecimiento prematuro de la FLASH)
 if ((segundos-segundosArduino)>=(3600*3)) { //Si ha pasado tres horas
