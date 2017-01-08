@@ -3,7 +3,7 @@
  *   AUTOR: David Losada
  *   FECHA: 8/08/2016
  *     URL: http://miqueridopinwino.blogspot.com.es/2016/08/control-centralizado-del-sistema-mixto-biomasa-solar-con-Arduino.html
- *   Versión 1.6 (15/12/16)
+ *   Versión 1.65 (7/01/17)
  *   - Se ha corregido el código de desconexión en caso de biomasa encendida, para evitar apagar el motor demasiado pronto con brasas
  *   - Se añade aviso de excesiva diferencia entre sondas, indicando en rojo la temperatura y activando alarma
  *   - Mejorada la alarma; se hace intermitente.
@@ -17,6 +17,7 @@
  *   - 10/12/16 Mejorados varios puntos; no contabilizaba horas de motor, y la comprobación de temperaturas no era óptima con depósito
  *   - 12/12/16 Mejorado el código: añadido código para dormir el procesador, reducir los refrescos a lo mínimo necesario y sensor de pellets futuro
  *   - 15/12/16 Corregida la evaluación del tiempo
+ *   - 07/01/16 Corregido error en la condición de apagado del motor en caso de activación por el captador solar
  *
  * OBJETIVO: Prototipo control de sistema casero mixto biomasa-solar térmica
  *
@@ -358,7 +359,7 @@ if(identifier == 0x9325) {
   tft.println(identifier, HEX);
   tft.setTextSize(1);
   tft.setCursor(90, 220);
-  tft.println("Copyright 2016 Ringmaster v1.6");
+  tft.println("Copyright 2016 Ringmaster v1.65");
   
   delay(6000);
 
@@ -403,7 +404,7 @@ pinMode(motorPIN, OUTPUT); digitalWrite(motorPIN,LOW);
 pinMode(valvbioPIN, OUTPUT); digitalWrite(valvbioPIN,LOW);
 pinMode(valvenfriaPIN, OUTPUT); digitalWrite(valvenfriaPIN,LOW);
 pinMode(ledPIN, OUTPUT);
-pinMode(zumbadorPIN, OUTPUT);
+pinMode(zumbadorPIN, OUTPUT); digitalWrite(zumbadorPIN,LOW);
 for(int i=primerSensor; i<numeroSensores; i++) {
   pinMode(i, INPUT);  
 }
@@ -495,12 +496,16 @@ Mtempsens[4]=Msensores[1];
 //Comprobamos biomasa, y actuamos sobre motor y electroválvulas en consecuencia
 Serial.println("Comparando temperaturas"); //Atención; tengo en cuenta también Biomasa2 para activar por biomasa
 //Si el fuego está encendido, activar motor y electroválvula circuito biomasa (PRIORITARIO)
-if ((Mtempsens[biomasa1]-Mtempsens[retorno])>= DtFbiomasa or (Mtempsens[biomasa2]-Mtempsens[retorno])>= DtFbiomasa) {
+if ((Mtempsens[biomasa1]-Mtempsens[retorno])>= DtFbiomasa or (Mtempsens[biomasa2]-Mtempsens[retorno])>= DtFbiomasa or (Mtempsens[biomasa1]-Mtempsens[deposito])>= DtFbiomasa) {
     valvula=true;
     motorON=true;
   }
 else { //Si lo anterior no se cumple, comprobar si ya no está caliente y si temperatura captador también está frío, apagar
-  if ((Mtempsens[biomasa1]-Mtempsens[retorno])<= Dtobiomasa and (Mtempsens[biomasa2]-Mtempsens[retorno])<= Dtobiomasa and (Mtempsens[captador]-Mtempsens[retorno])< Dtosolar) {
+  if ((Mtempsens[biomasa1]-Mtempsens[retorno])<= Dtobiomasa and (Mtempsens[biomasa2]-Mtempsens[retorno])<= Dtobiomasa) {
+    motorON=false;
+  }
+  //Si se activó por el captador, pero ya está frío, apagar motor
+  if ((Mtempsens[captador]-Mtempsens[retorno])< Dtosolar and valvula==false) {
     motorON=false;
   }
   //Si captador solar está caliente activamos motor
