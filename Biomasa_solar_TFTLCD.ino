@@ -1,5 +1,5 @@
 /*
- * ARCHIVO: Control sistema térmico mixto biomasa-solar
+ * ARCHIVO: Control sistema térmico mixto biomasa-solar, funcionando en un Arduino Mega 2560 y TFT shield táctil de 2,4" McuFriend (buhosoft Libraries)
  *   AUTOR: David Losada
  *   FECHA: 8/08/2016
  *     URL: http://miqueridopinwino.blogspot.com.es/2016/08/control-centralizado-del-sistema-mixto-biomasa-solar-con-Arduino.html
@@ -18,7 +18,7 @@
  *   - 12/12/16 Mejorado el código: añadido código para dormir el procesador, reducir los refrescos a lo mínimo necesario y sensor de pellets futuro
  *   - 15/12/16 Corregida la evaluación del tiempo
  *   - 07/01/16 Corregido error en la condición de apagado del motor en caso de activación por el captador solar
- *	 - 18/01/17 Añadido tiempo mínimo de activación motor (se estaba activando intermitentemente en determinados casos)
+ *   - 18/01/17 Añadido tiempo mínimo de activación motor (se estaba activando intermitentemente en determinados casos)
  *   - 30/01/17 Añado la condición de que estén los sensores de biomasa al menos a cierta temp. para activar el motor, ya que puede que se calienten por el sol en invierno
  *   - 20/03/17 Ajustados valores; con el fuego al principio difTemp era demasiado pequeña.
  *
