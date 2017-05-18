@@ -1,5 +1,5 @@
 /*
- * ARCHIVO: Control sistema térmico mixto biomasa-solar, funcionando en un Arduino Mega 2560 y TFT shield táctil de 2,4" McuFriend (buhosoft Libraries)
+ * ARCHIVO: Control sistema térmico mixto biomasa-solar
  *   AUTOR: David Losada
  *   FECHA: 8/08/2016
  *     URL: http://miqueridopinwino.blogspot.com.es/2016/08/control-centralizado-del-sistema-mixto-biomasa-solar-con-Arduino.html
@@ -18,9 +18,10 @@
  *   - 12/12/16 Mejorado el código: añadido código para dormir el procesador, reducir los refrescos a lo mínimo necesario y sensor de pellets futuro
  *   - 15/12/16 Corregida la evaluación del tiempo
  *   - 07/01/16 Corregido error en la condición de apagado del motor en caso de activación por el captador solar
- *   - 18/01/17 Añadido tiempo mínimo de activación motor (se estaba activando intermitentemente en determinados casos)
+ *	 - 18/01/17 Añadido tiempo mínimo de activación motor (se estaba activando intermitentemente en determinados casos)
  *   - 30/01/17 Añado la condición de que estén los sensores de biomasa al menos a cierta temp. para activar el motor, ya que puede que se calienten por el sol en invierno
  *   - 20/03/17 Ajustados valores; con el fuego al principio difTemp era demasiado pequeña.
+ *   - 05/05/17 Eliminado el ajuste mínimo de temperatura de activación, era peor el remedio que la enfermedad.
  *
  * OBJETIVO: Prototipo control de sistema casero mixto biomasa-solar térmica
  *
@@ -29,7 +30,7 @@
  * version 2 as published by the Free Software Foundation.
  */
 
-#define Copyright "Copyright 2016 Ringmaster v1.68"
+#define Copyright "Copyright 2016 Ringmaster v1.69"
 
 // Uses TFTLCD sketch that has been Refurbished by BUHOSOFT
 // If using an Arduino Mega make sure to use its hardware SPI pins, OR make
@@ -150,21 +151,21 @@ const float voltage = 5.01; // El voltaje real en el punto 5Vcc de tu placa Ardu
 
 //Deltas de temperatura
 const byte DtFsolar = 6; //Delta temp ºC conexión de motor circuito panel solar
-const byte Dtosolar = 1; //Delta temp. desconexión motor
+const byte Dtosolar = 2; //Delta temp. desconexión motor
 
-const byte DtFbiomasa = 8; //Delta temp ºC conexión de motor y válvula circuito biomasa
+const byte DtFbiomasa = 10; //Delta temp ºC conexión de motor y válvula circuito biomasa
 const byte Dtobiomasa = 2; //Delta temp ºC desconexión de motor y válvula circuito biomasa
 
-const byte DtFEnfriar = 65; //Temp. ºC conexión electroválvula circuito desvío exceso temp a calefacción
-const byte DtoEnfriar = 60; //Temp. desconexión electroválvula desvío agua caliente a calefacción
+const byte DtFEnfriar = 65; //Temp. ºC conexión electroválvula circuito desvío exceso temp depósito a calefacción
+const byte DtoEnfriar = 60; //Temp. desconexión electroválvula desvío calor de depósito a calefacción
 
-const byte TempDesvio = 85; //Temperatura a partir de la cual activamos el circuito de enfriamiento
+const byte TempDesvio = 85; //Temperatura de serpentín a partir de la cual activamos el circuito de enfriamiento, ya que el depósito no consigue absorver el exceso
 
 const int frecseg = 1; //Tiempo en segundos (X2) entre cada ejecución del programa (recomendado poner entre 1 y 3 para mantener la velocidad de respuesta)
 const byte difTemp = 40; //Diferencia de temperatura máxima entre sondas considerada normal, a partir de la cual salta la alarma
 const double ltsdeposito = 250; //para el cálculo de Kwh ahorrados; indicar aquí la capacidad del depósito de inercia
 const int minTimeMotor = 180; //Tiempo mínimo en segundos de activación motor, recomendado entre 60 y 360
-const byte minTempBio = 35; //Temperatura mínima de activación por biomasa
+//const byte minTempBio = 35; //Temperatura mínima de activación por biomasa ANULADO
 
 //Definición pines digitales para activar relés
 #define ledPIN 13 //Led placa arduino
@@ -503,12 +504,12 @@ Mtempsens[4]=Msensores[1];
 //Comprobamos biomasa, y actuamos sobre motor y electroválvulas en consecuencia
 Serial.println("Comparando temperaturas"); //Atención; tengo en cuenta también Biomasa2 para activar por biomasa
 //Si el fuego está encendido, activar motor y electroválvula circuito biomasa (PRIORITARIO)
-if (((Mtempsens[biomasa1]-Mtempsens[retorno])>= DtFbiomasa or (Mtempsens[biomasa2]-Mtempsens[retorno])>= DtFbiomasa or (Mtempsens[biomasa1]-Mtempsens[deposito])>= DtFbiomasa) and (Mtempsens[biomasa1]>minTempBio or Mtempsens[biomasa2]>minTempBio)) {
+if (((Mtempsens[biomasa1]-Mtempsens[retorno])>= DtFbiomasa or (Mtempsens[biomasa2]-Mtempsens[retorno])>= DtFbiomasa or (Mtempsens[biomasa1]-Mtempsens[deposito])>= DtFbiomasa)) {
     valvula=true;
     motorON=true;
   }
 else { //Si lo anterior no se cumple, comprobar si ya no está caliente y si temperatura captador también está frío, apagar
-  if ((Mtempsens[biomasa1]-Mtempsens[retorno])<= Dtobiomasa and (Mtempsens[biomasa2]-Mtempsens[retorno])<= Dtobiomasa or (Mtempsens[biomasa1]<minTempBio and Mtempsens[biomasa2]<minTempBio)) {
+  if ((Mtempsens[biomasa1]-Mtempsens[retorno])<= Dtobiomasa and (Mtempsens[biomasa2]-Mtempsens[retorno])<= Dtobiomasa) {
     motorON=false;
   }
   //Si se activó por el captador, pero ya está frío, apagar motor
@@ -555,10 +556,6 @@ else  {
       digitalWrite(motorPIN,LOW);
       }
     }
-}
-
-if (valvula==true and Mtempsens[biomasa1]<minTempBio and Mtempsens[biomasa2]<minTempBio) {
-  valvula=false; //Si la temp. de biomasa ha bajado por debajo del mínimo, apagamos válvula
 }
 
 if (motorON==false and (segundos-segundosValvula)>=600) { //Si el motor sigue apagado 10 minutos, apagamos válvula tres vías.
