@@ -3,7 +3,8 @@
  *   AUTOR: David Losada
  *   FECHA: 8/08/2016
  *     URL: http://miqueridopinwino.blogspot.com.es/2016/08/control-centralizado-del-sistema-mixto-biomasa-solar-con-Arduino.html
- *   Versión 1.68 (13/03/17)
+ *   Versión 1.8 (7/05/18)
+ *   - Se ajustan las temperaturas de conexión y desconexión biomasa y captador para evitar perder energía en tubos por desajustes
  *   - Se ha corregido el código de desconexión en caso de biomasa encendida, para evitar apagar el motor demasiado pronto con brasas
  *   - Se añade aviso de excesiva diferencia entre sondas, indicando en rojo la temperatura y activando alarma
  *   - Mejorada la alarma; se hace intermitente.
@@ -22,6 +23,7 @@
  *   - 30/01/17 Añado la condición de que estén los sensores de biomasa al menos a cierta temp. para activar el motor, ya que puede que se calienten por el sol en invierno
  *   - 20/03/17 Ajustados valores; con el fuego al principio difTemp era demasiado pequeña.
  *   - 05/05/17 Eliminado el ajuste mínimo de temperatura de activación, era peor el remedio que la enfermedad.
+ *   - 07/05/18 Al ver que en caso de mucha temperatura de la biomasa, las diferencias entre temperaturas son mínimas, lo tengo en cuenta ahora al disminuir la temperatura de activación según ésta sube
  *
  * OBJETIVO: Prototipo control de sistema casero mixto biomasa-solar térmica
  *
@@ -30,7 +32,7 @@
  * version 2 as published by the Free Software Foundation.
  */
 
-#define Copyright "Copyright 2016 Ringmaster v1.69"
+#define Copyright "Copyright 2016-18 Ringmaster v1.8"
 
 // Uses TFTLCD sketch that has been Refurbished by BUHOSOFT
 // If using an Arduino Mega make sure to use its hardware SPI pins, OR make
@@ -150,16 +152,16 @@ const int resistor = 6800; //El valor en ohmnios de la resistencia del termistor
 const float voltage = 5.01; // El voltaje real en el punto 5Vcc de tu placa Arduino
 
 //Deltas de temperatura
-const byte DtFsolar = 6; //Delta temp ºC conexión de motor circuito panel solar
-const byte Dtosolar = 2; //Delta temp. desconexión motor
+const byte DtFsolar = 10; //Delta temp ºC conexión de motor circuito panel solar
+const byte Dtosolar = 6; //Delta temp. desconexión motor
 
-const byte DtFbiomasa = 10; //Delta temp ºC conexión de motor y válvula circuito biomasa
-const byte Dtobiomasa = 2; //Delta temp ºC desconexión de motor y válvula circuito biomasa
+const byte DtFbiomasa = 12; //Delta temp ºC conexión de motor y válvula circuito biomasa
+const byte Dtobiomasa = 4; //Delta temp ºC desconexión de motor y válvula circuito biomasa
 
-const byte DtFEnfriar = 65; //Temp. ºC conexión electroválvula circuito desvío exceso temp depósito a calefacción
-const byte DtoEnfriar = 60; //Temp. desconexión electroválvula desvío calor de depósito a calefacción
+const byte DtFEnfriar = 60; //Temp. ºC conexión electroválvula circuito desvío exceso temp depósito a calefacción
+const byte DtoEnfriar = 55; //Temp. desconexión electroválvula desvío calor de depósito a calefacción
 
-const byte TempDesvio = 85; //Temperatura de serpentín a partir de la cual activamos el circuito de enfriamiento, ya que el depósito no consigue absorver el exceso
+const byte TempDesvio = 80; //Temperatura de serpentín a partir de la cual activamos el circuito de enfriamiento, ya que el depósito no consigue absorver el exceso
 
 const int frecseg = 1; //Tiempo en segundos (X2) entre cada ejecución del programa (recomendado poner entre 1 y 3 para mantener la velocidad de respuesta)
 const byte difTemp = 40; //Diferencia de temperatura máxima entre sondas considerada normal, a partir de la cual salta la alarma
@@ -313,39 +315,39 @@ void setup() {
 
 if(identifier == 0x9325) {
 #ifdef DEBUG
-    Serial.println("Found ILI9325 LCD driver");
+    Serial.println(F("Found ILI9325 LCD driver"));
 #endif // DEBUG
   } else if(identifier == 0x9328) {
 #ifdef DEBUG
-    Serial.println("Found ILI9328 LCD driver");
+    Serial.println(F("Found ILI9328 LCD driver"));
 #endif // DEBUG
   } else if(identifier == 0x7575) {
 #ifdef DEBUG
-    Serial.println("Found HX8347G LCD driver");
+    Serial.println(F("Found HX8347G LCD driver"));
 #endif // DEBUG
   } else if(identifier == 0x9341) {
 #ifdef DEBUG
-    Serial.println("Found ILI9341 LCD driver");
+    Serial.println(F("Found ILI9341 LCD driver"));
 #endif // DEBUG
   } else if(identifier == 0x8357) {
 #ifdef DEBUG
-    Serial.println("Found HX8357D LCD driver");
+    Serial.println(F("Found HX8357D LCD driver"));
 #endif // DEBUG
   } else if(identifier == 0x0154) {
 #ifdef DEBUG
-    Serial.println("Found S6D0154 LCD driver");
+    Serial.println(F("Found S6D0154 LCD driver"));
 #endif // DEBUG
     } else {
     #ifdef DEBUG
-    Serial.print("Unknown LCD driver chip: ");
+    Serial.print(F("Unknown LCD driver chip: "));
     Serial.println(identifier, HEX);
-    Serial.print("I try use ILI9341 LCD driver ");
-    Serial.println("If using the Adafruit 2.8\" TFT Arduino shield, the line:");
-    Serial.println("  #define USE_ADAFRUIT_SHIELD_PINOUT");
-    Serial.println("should appear in the library header (Adafruit_TFT.h).");
-    Serial.println("If using the breakout board, it should NOT be #defined!");
-    Serial.println("Also if using the breakout, double-check that all wiring");
-    Serial.println("matches the tutorial.");
+    Serial.print(F("I try use ILI9341 LCD driver "));
+    Serial.println(F("If using the Adafruit 2.8\" TFT Arduino shield, the line:"));
+    Serial.println(F("  #define USE_ADAFRUIT_SHIELD_PINOUT"));
+    Serial.println(F("should appear in the library header (Adafruit_TFT.h)."));
+    Serial.println(F("If using the breakout board, it should NOT be #defined!"));
+    Serial.println(F("Also if using the breakout, double-check that all wiring"));
+    Serial.println(F("matches the tutorial."));
     #endif // DEBUG
     identifier = 0x9341;
   }
@@ -504,12 +506,13 @@ Mtempsens[4]=Msensores[1];
 //Comprobamos biomasa, y actuamos sobre motor y electroválvulas en consecuencia
 Serial.println("Comparando temperaturas"); //Atención; tengo en cuenta también Biomasa2 para activar por biomasa
 //Si el fuego está encendido, activar motor y electroválvula circuito biomasa (PRIORITARIO)
-if (((Mtempsens[biomasa1]-Mtempsens[retorno])>= DtFbiomasa or (Mtempsens[biomasa2]-Mtempsens[retorno])>= DtFbiomasa or (Mtempsens[biomasa1]-Mtempsens[deposito])>= DtFbiomasa)) {
+//Para que según sube la temperatura, los deltas de activación disminuyan (y no se apague estando el fuego encendido), se multiplica por 20 se divide por la temperatura
+if (((Mtempsens[biomasa1]-Mtempsens[retorno])>= (DtFbiomasa*20/Mtempsens[biomasa1]) or (Mtempsens[biomasa2]-Mtempsens[retorno])>= (DtFbiomasa*20/Mtempsens[biomasa2]) or (Mtempsens[biomasa1]-Mtempsens[deposito])>= (DtFbiomasa*20/Mtempsens[biomasa1]))) {
     valvula=true;
     motorON=true;
   }
-else { //Si lo anterior no se cumple, comprobar si ya no está caliente y si temperatura captador también está frío, apagar
-  if ((Mtempsens[biomasa1]-Mtempsens[retorno])<= Dtobiomasa and (Mtempsens[biomasa2]-Mtempsens[retorno])<= Dtobiomasa) {
+else { //Si lo anterior no se cumple, comprobar si ya no está caliente y si temperatura captador también está frío, apagar teniendo en cuenta que a mayor temperatura, menores diferencias
+  if ((Mtempsens[biomasa1]-Mtempsens[retorno])<= (Dtobiomasa*20/Mtempsens[biomasa1]) and (Mtempsens[biomasa2]-Mtempsens[retorno])<= (Dtobiomasa*20/Mtempsens[biomasa2])) {
     motorON=false;
   }
   //Si se activó por el captador, pero ya está frío, apagar motor
@@ -589,7 +592,7 @@ else { //Desactivar la válvula enfriado si la temp depósito ha bajado suficien
 Serial.println("Mostramos en pantalla");
 // Y por ultimo lo mandamos a la pantalla LCD
 //Cada hora actualizamos texto y estadísticas (y en los primeros segundos)
-if ((segundos-segundosRefresca)>=3600 or millis()<10000) {
+if ((segundos-segundosRefresca)>=3600 or millis()<8000) {
     segundosRefresca=segundos;
     tft.fillScreen(BLACK); //Es muy lento, tenerlo en cuenta
     tft.setTextSize(3);
