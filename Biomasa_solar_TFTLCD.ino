@@ -3,7 +3,7 @@
  *   AUTOR: David Losada
  *   FECHA: 8/08/2016
  *     URL: http://miqueridopinwino.blogspot.com.es/2016/08/control-centralizado-del-sistema-mixto-biomasa-solar-con-Arduino.html
- *   Versión 1.8 (7/05/18)
+ *   Versión 1.9 (22/02/19)
  *   - Se ajustan las temperaturas de conexión y desconexión biomasa y captador para evitar perder energía en tubos por desajustes
  *   - Se ha corregido el código de desconexión en caso de biomasa encendida, para evitar apagar el motor demasiado pronto con brasas
  *   - Se añade aviso de excesiva diferencia entre sondas, indicando en rojo la temperatura y activando alarma
@@ -24,6 +24,7 @@
  *   - 20/03/17 Ajustados valores; con el fuego al principio difTemp era demasiado pequeña.
  *   - 05/05/17 Eliminado el ajuste mínimo de temperatura de activación, era peor el remedio que la enfermedad.
  *   - 07/05/18 Al ver que en caso de mucha temperatura de la biomasa, las diferencias entre temperaturas son mínimas, lo tengo en cuenta ahora al disminuir la temperatura de activación según ésta sube
+ *   - 22/02/19 Se anula la parte en que la temp. biomasa se compara con depósito, se activa sólo siempre que sea mayor que el retorno
  *
  * OBJETIVO: Prototipo control de sistema casero mixto biomasa-solar térmica
  *
@@ -32,7 +33,7 @@
  * version 2 as published by the Free Software Foundation.
  */
 
-#define Copyright "Copyright 2016-18 Ringmaster v1.8"
+#define Copyright "Copyright 2016-18 Ringmaster v1.9"
 
 // Uses TFTLCD sketch that has been Refurbished by BUHOSOFT
 // If using an Arduino Mega make sure to use its hardware SPI pins, OR make
@@ -153,7 +154,7 @@ const float voltage = 5.01; // El voltaje real en el punto 5Vcc de tu placa Ardu
 
 //Deltas de temperatura
 const byte DtFsolar = 10; //Delta temp ºC conexión de motor circuito panel solar
-const byte Dtosolar = 6; //Delta temp. desconexión motor
+const byte Dtosolar = 5; //Delta temp. desconexión motor
 
 const byte DtFbiomasa = 12; //Delta temp ºC conexión de motor y válvula circuito biomasa
 const byte Dtobiomasa = 4; //Delta temp ºC desconexión de motor y válvula circuito biomasa
@@ -201,6 +202,7 @@ String TextoAnt;
 
 boolean motorON=false; //Para comprobar si está en marcha
 boolean valvula=false; //control electroválvula 3 vías biomasa
+boolean tresvias=false; //Para separar conceptos
 //datos estadísticos y otras
 long Mdatos[6] = {0,0,0,0,0,0}; //Matriz estadístias uso
 //Matriz de arrays (*=pointers) de los nombres de los datos; No deberían tener más de 13 caracteres cada una (sumar 
@@ -507,22 +509,23 @@ Mtempsens[4]=Msensores[1];
 Serial.println("Comparando temperaturas"); //Atención; tengo en cuenta también Biomasa2 para activar por biomasa
 //Si el fuego está encendido, activar motor y electroválvula circuito biomasa (PRIORITARIO)
 //Para que según sube la temperatura, los deltas de activación disminuyan (y no se apague estando el fuego encendido), se multiplica por 20 se divide por la temperatura
-if (((Mtempsens[biomasa1]-Mtempsens[retorno])>= (DtFbiomasa*20/Mtempsens[biomasa1]) or (Mtempsens[biomasa2]-Mtempsens[retorno])>= (DtFbiomasa*20/Mtempsens[biomasa2]) or (Mtempsens[biomasa1]-Mtempsens[deposito])>= (DtFbiomasa*20/Mtempsens[biomasa1]))) {
+if ((Mtempsens[biomasa1]-Mtempsens[retorno])>= (DtFbiomasa*20/Mtempsens[biomasa1]) or (Mtempsens[biomasa2]-Mtempsens[retorno])>= (DtFbiomasa*20/Mtempsens[biomasa2])) { //or (Mtempsens[biomasa1]-Mtempsens[deposito])>= (DtFbiomasa*20/Mtempsens[biomasa1])) {
     valvula=true;
     motorON=true;
   }
 else { //Si lo anterior no se cumple, comprobar si ya no está caliente y si temperatura captador también está frío, apagar teniendo en cuenta que a mayor temperatura, menores diferencias
   if ((Mtempsens[biomasa1]-Mtempsens[retorno])<= (Dtobiomasa*20/Mtempsens[biomasa1]) and (Mtempsens[biomasa2]-Mtempsens[retorno])<= (Dtobiomasa*20/Mtempsens[biomasa2])) {
     motorON=false;
-  }
-  //Si se activó por el captador, pero ya está frío, apagar motor
-  if ((Mtempsens[captador]-Mtempsens[retorno])< Dtosolar and valvula==false) {
-    motorON=false;
+    valvula=false;
   }
   //Si captador solar está caliente activamos motor
   if ((Mtempsens[captador]-Mtempsens[deposito])>= DtFsolar) { //Si diferencia temp. captador y depósito mayor que el delta, activar motor
     motorON=true;
     }
+  //Si se activó por el captador, pero ya está frío, apagar motor
+  if ((Mtempsens[captador]-Mtempsens[retorno])< Dtosolar and valvula==false) {
+    motorON=false;
+  } 
  }
 
 //Serial.print("Temp deposito: ");
@@ -561,11 +564,15 @@ else  {
     }
 }
 
-if (motorON==false and (segundos-segundosValvula)>=600) { //Si el motor sigue apagado 10 minutos, apagamos válvula tres vías.
-      valvula=false;  //Para evitar accionamientos innecesarios en las bajadas de temp por recargas de leña
+if (valvula==false and (segundos-segundosValvula)>=600) { //Si el motor sigue apagado 10 minutos, apagamos válvula tres vías.
+      tresvias=false;  //Para evitar accionamientos innecesarios en las bajadas de temp por recargas de leña
+}
+if (valvula==true) {
+  tresvias=true;
 }
 
-if (valvula==true) {
+//Según el valor de tresvías (válvula) actuamos
+if (tresvias==true) {
     if (digitalRead(valvbioPIN)==LOW) { //Se activa relé; contamos el número de activaciones
       Mdatos[ctrValvulaFuego]++;
         }
